@@ -1,5 +1,5 @@
 /*
-AD56X4R.h  - Library for controlling Analog Devices AD56X4 quad channel DACs w/internal reference
+AD56XXR.h  - Library for controlling Analog Devices AD56XX dual/quad channel DACs w/internal reference
 
 Created by Ben Reschovsky, 2015
 JQI - Joint Quantum Institute
@@ -31,48 +31,76 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 *	\date	2015-06-22
 */
 
-#ifndef AD56X4R_h
-#define AD56X4R_h
+#ifndef AD56XXR_h
+#define AD56XXR_h
 
 #include "Arduino.h"
 
-class AD56X4R
+#define AD56XXR_WRITE_INPUT_REG_N         0x00
+#define AD56XXR_UPDATE_DAC_REG_N          0x01
+#define AD56XXR_WRITE_INPUT_REG_N_UPDATE  0x02
+#define AD56XXR_WRITE_UPDATE_DAC_N        0x03
+#define AD56XXR_POWERDOWN                 0x04
+#define AD56XXR_RESET                     0x05
+#define AD56XXR_LDAC_REG_SETUP            0x06
+#define AD56XXR_INT_REF_SETUP             0x07
+
+#define AD56XXR_COMMAND_MASK 0x07
+
+// if speed not defined, default to 500kHz.
+#ifndef AD56XXR_SPI_SPEED
+#define AD56XXR_SPI_SPEED 500000
+#endif
+
+class AD56XXR
 {
 public:
   // Constructor function.
-  AD56X4R(int CS_PIN, int SCK_PIN, int MOSI_PIN, int num_bits, double volt_ref, double volt_offset, bool int_ext_ref);
+  AD56XXR(uint8_t CS_PIN, uint8_t SCK_PIN, uint8_t MOSI_PIN, uint8_t num_bits, double volt_ref, double volt_offset, bool int_ext_ref);
 
   // constructor if using default SPI (not software-emulated)
-  AD56X4R(int CS_PIN, int num_bits, double volt_ref, double volt_offset, bool int_ext_ref);
+  AD56XXR(uint8_t CS_PIN, uint8_t num_bits, double volt_ref, double volt_offset, bool int_ext_ref);
 
   // writes voltage Vout to the DAC on channel ch
-  void setVoltage(byte ch, double Vout);
+  void setVolt(uint8_t ch, double volt);
 
-  //function to send DATA to the DAC, this version uses a software emulated SPI protocol:
-  void writeDAC(byte command, byte address, word data);
+  //function to get voltage at specified DAC address
+  double getVolt(uint8_t ch);
 
-  //function to enable or disable internal voltage reference (1/True = use internal, 0/False = use external)
-  void setIntRefV(boolean onoff);
+  // set DAC tuning word
+  void setVal(uint8_t ch, uint16_t val);
 
   //function to get current tuning value at specified DAC address
-  word getVal(byte address);
+  uint16_t getVal(uint8_t ch);
 
-  //function to get set voltage at specified DAC address
-  double getV(byte address);
+  //function to send DATA to the DAC, this version uses a software emulated SPI protocol:
+  void writeDAC(uint8_t command, uint8_t address,  uint16_t data);
 
-  void setDAC(byte ch, unsigned long val);
+  //function to enable or disable internal voltage reference (1/True = use internal, 0/False = use external)
+  void setIntRef(bool state);
+
+  void setMaxVal(uint8_t ch, uint16_t val);
+
+  void setMinVal(uint8_t ch, uint16_t val);
+
 
 private:
+
   //Instance variable to hold pin mappings:
-  byte _CS_PIN, _SCK_PIN, _MOSI_PIN;
+  uint8_t _CS_PIN, _SCK_PIN, _MOSI_PIN;
 
   //Instance variable to hold DAC precision (12, 14, or 16 bits) and refernce voltage:
-  byte _dac_precision;
-  double _volt_ref, _volt_max, _volt_offset;
+  uint8_t _dac_precision;
+  double _volt_ref, _volt_offset;
+
+  // transfer functions
+  uint16_t volt_to_val(double volt);
+  double val_to_volt(uint16_t val);
 
   //Instance variables to hold DAC set values and voltages for channels 0-3:
-  word _val[4];
-  double _voltage[4];
+  uint16_t _val[4], _minVal[4], _maxVal[4];
+
+  bool _emulate_spi;
 };
 
 #endif

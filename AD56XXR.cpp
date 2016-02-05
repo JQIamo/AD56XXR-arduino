@@ -1,6 +1,6 @@
 /*
 
-AD56X4R.h  - Library for controlling Analog Devices AD56X4 quad channel DACs w/internal reference
+AD56XXR.h  - Library for controlling Analog Devices AD56XX quad channel DACs w/internal reference
 
 Created by Ben Reschovsky, 2015
 JQI - Joint Quantum Institute
@@ -20,8 +20,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 */
 
-/*!	\file	AD56X4R.h
-*	\brief	Library for controlling AD56X4R chips
+/*!	\file	AD56XXR.h
+*	\brief	Library for controlling AD56XXR chips
 *	\details Library for controlling a AD5664R, AD5644R, and AD5624R (16, 14, 12 bits)
 *          See http://www.analog.com/media/en/technical-documentation/data-sheets/AD5624R_5644R_5664R.pdf
 *          for the datasheet. This library uses a software-emulated MOSI communication scheme but could
@@ -33,14 +33,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "Arduino.h"
-#include "AD56X4R.h"
+#include "AD56XXR.h"
 
 #include "SPI.h"
 
 /* CONSTRUCTOR */
 
 // Constructor function; initializes communication pinouts
-AD56X4R::AD56X4R(byte CS_PIN, byte SCK_PIN, byte MOSI_PIN, byte num_bits, double volt_ref, double volt_offset, boolean int_ext_ref){
+AD56XXR::AD56XXR(uint8_t CS_PIN, uint8_t SCK_PIN, uint8_t MOSI_PIN, uint8_t num_bits, double volt_ref, double volt_offset, bool int_ref){
+  _emulate_spi = 1;
   _CS_PIN = CS_PIN;
   _SCK_PIN = SCK_PIN;
   _MOSI_PIN = MOSI_PIN;
@@ -52,153 +53,169 @@ AD56X4R::AD56X4R(byte CS_PIN, byte SCK_PIN, byte MOSI_PIN, byte num_bits, double
   } else if (num_bits == 16) {
     _dac_precision = 16;
   } else {
-    Serial.println("WARNING:DAC object initialized with wrong number of bits of precision. Allowed values are 12, 14, or 16");
+    //Serial.println("WARNING:DAC object initialized with wrong number of bits of precision. Allowed values are 12, 14, or 16");
     _dac_precision = 12; //choose a reasonable default
   }
   _volt_ref = volt_ref;
   _volt_offset = volt_offset;
 
-  if (int_ext_ref) {
-    _volt_max = _volt_ref*2.0; //This factor of two is only valid for internal voltage reference
+  // set min/max val; not sure what best thing to do is for "global" channel set
+  for (int i = 0; i < 4; i++){
+    _minVal[i] = 0;
+    _maxVal[i] = (1UL << _dac_precision) - 1;
+  }
+
+
+  // sets up the pinmodes for output
+  pinMode(_CS_PIN, OUTPUT);
+  digitalWrite(_CS_PIN, HIGH);
+
+  pinMode(_MOSI_PIN, OUTPUT);
+  digitalWrite(_MOSI_PIN, LOW);
+
+  pinMode(_SCK_PIN, OUTPUT);
+  digitalWrite(_SCK_PIN, HIGH);
+}
+
+// If using builtin SPI
+// will want to figure otu better way for configuring SPISettings...
+AD56XXR::AD56XXR(uint8_t CS_PIN, uint8_t num_bits, double volt_ref, double volt_offset, bool int_ref){
+  _emulate_spi = 0;
+  _CS_PIN = CS_PIN;
+
+  if (num_bits == 12) {
+    _dac_precision = 12;
+  } else if (num_bits == 14) {
+    _dac_precision = 14;
+  } else if (num_bits == 16) {
+    _dac_precision = 16;
   } else {
-    _volt_max = _volt_ref;
+    //Serial.println("WARNING:DAC object initialized with wrong number of bits of precision. Allowed values are 12, 14, or 16");
+    _dac_precision = 12; //choose a reasonable default
+  }
+  _volt_ref = volt_ref;
+  _volt_offset = volt_offset;
+
+  // set min/max val; not sure what best thing to do is for "global" channel set
+  for (int i = 0; i < 4; i++){
+    _minVal[i] = 0;
+    _maxVal[i] = (1UL << _dac_precision) - 1;
   }
 
   // sets up the pinmodes for output
   pinMode(_CS_PIN, OUTPUT);
-  //assume that MOSI and SCK pins are setup elsewhere since they are not unique to this class
-
-  // defaults for pin logic levels
   digitalWrite(_CS_PIN, HIGH);
-  pinMode(_SCK_PIN, OUTPUT);
-  pinMode(_MOSI_PIN, OUTPUT);
-  digitalWrite(_SCK_PIN, HIGH);
-  digitalWrite(_MOSI_PIN, LOW);
 }
+
 
 /* PUBLIC CLASS FUNCTIONS */
 
-void AD56X4R::setDAC(byte ch, unsigned long val){
-  writeDAC(B00011000,ch,val);
+//enable or disable internal voltage reference (1/True = use internal, 0/False = use external)
+void AD56XXR::setIntRef(bool state){
+  writeDAC(AD56XXR_INT_REF_SETUP, 0, state); //enable or disable internal voltage reference
 }
 
-//function that writes the voltage val to the DAC channel ch (executes immediately):
-void AD56X4R::setVoltage(byte ch, double Vout){
-  if (ch > 4) {
-    Serial.println("WARNING:unrecognized DAC Channel, allowed values are 0,1,2,3,4");
+void AD56XXR::setMinVal(uint8_t ch, uint16_t val){
+  _minVal[ch] = val;
+}
+
+void AD56XXR::setMaxVal(uint8_t ch, uint16_t val){
+  _maxVal[ch] = val;
+}
+
+void AD56XXR::setVal(uint8_t ch, uint16_t val){
+  if (ch >= 4) {
+    //Serial.println("WARNING:unrecognized DAC Channel, allowed values are 0,1,2,3,4"); // now only let individual channel addressing
     return; //channel isn't valid, return without doing anything
   }
 
-  word maxVal = (1 << _dac_precision) - 1;
-  word data;
-  if (Vout > _volt_max) {
-    data = maxVal; //command is larger than max voltage allowed, default to max voltage
-    _val[ch] = maxVal;
-    _voltage[ch] = _volt_max;
-  } else if (Vout < 0) {
-    data = 0; //command is less than zero, default to zero
-    _val[ch] = 0;
-    _voltage[ch] = 0.0;
-  } else {
-    data = round(maxVal*(Vout-_volt_offset)/_volt_max); //DAC transfer function
-    _val[ch] = data;
-    _voltage[ch] = Vout;
+  val = constrain(val, _minVal[ch], _maxVal[ch]);
+
+  // bit shift depending on DAC precision
+  if (_dac_precision == 12){
+    val = (0x0FFF & val) << 4;
+  } else if (_dac_precision == 14){
+    val = (0x3FFF & val) << 2;
   }
 
-  Serial.println(data);
-  Serial.print("Commanded Voltage: ");
-  Serial.println(Vout,5);
-
-  byte bit_shift;
-  if (_dac_precision == 12) {
-    bit_shift = 4;
-  } else if (_dac_precision == 14) {
-    bit_shift = 2;
-  } else {
-    bit_shift = 0;
-  }
-
-  //bit shift (depends on DAC precision) is needed to move command bits to right location:
-  data <<= bit_shift;
-  writeDAC(B00011000,ch,data);
-}
-
-//Send an actual command to the DAC. This version uses a software emulated SPI protocol
-
-void AD56X4R::writeDAC(byte command, byte address, word data){
-  byte first = (command & B00111000) | (address & B00000111);
-  byte second = lowByte(data >> 8);
-  byte third = lowByte(data);
-  SPI.beginTransaction(SPISettings(500000, MSBFIRST, SPI_MODE2));
-  digitalWrite(_CS_PIN, LOW);
-  SPI.transfer(first);
-  SPI.transfer(second);
-  SPI.transfer(third);
-  delayMicroseconds(1);
-
-  digitalWrite(_CS_PIN, HIGH);
-  SPI.endTransaction();
-}
-
-
-
-/*
-void AD56X4R::writeDAC(byte command, byte address, word data){
-
-//Make sure communication lines are initialized
-digitalWrite(_SCK_PIN, HIGH);
-digitalWrite(_CS_PIN,LOW);
-//digitalWrite(_MOSI_PIN, LOW);
-
-// The first byte is composed of two bits of nothing, then
-// the command bits, and then the address bits. Masks are
-// used for each set of bits and then the fields are OR'ed
-// together.
-byte first = (command & B00111000) | (address & B00000111);
-int send_bit;
-for (int i = 7; i >= 0; i--){
-send_bit = (first >> i) & 0x01;	// mask out i_th bit
-// start MSB first
-digitalWrite(_MOSI_PIN, send_bit);
-delayMicroseconds(1);
-
-digitalWrite(_SCK_PIN, LOW);
-delayMicroseconds(1);
-digitalWrite(_SCK_PIN, HIGH);
-delayMicroseconds(1);
-}
-
-// Send the data word. Must be sent byte by byte, MSB first.
-uint16_t second = data;
-for (int i = 15; i >= 0; i--){
-send_bit = (second >> i) & 0x01;	// mask out i_th bit
-// start MSB first
-digitalWrite(_MOSI_PIN, send_bit);
-delayMicroseconds(1);
-
-digitalWrite(_SCK_PIN, LOW);
-delayMicroseconds(1);
-digitalWrite(_SCK_PIN, HIGH);
-delayMicroseconds(1);
-}
-
-// Set the Slave Select pin back to high since we are done
-// sending the command.
-digitalWrite(_CS_PIN,HIGH);
-}*/
-
-
-//enable or disable internal voltage reference (1/True = use internal, 0/False = use external)
-void AD56X4R::setIntRefV(boolean onoff){
-  writeDAC(B00111000,0,onoff); //enable or disable internal voltage reference
+  writeDAC(AD56XXR_WRITE_UPDATE_DAC_N, ch, val);
+  _val[ch] = val;
 }
 
 //function to get current tuning value at specified DAC address
-word AD56X4R::getVal(byte address){
-  return _val[address];
+uint16_t AD56XXR::getVal(uint8_t ch){
+  return _val[ch];
+}
+
+
+//function that writes the voltage val to the DAC channel ch (executes immediately):
+void AD56XXR::setVolt(uint8_t ch, double volt){
+  uint16_t val = volt_to_val(volt);
+  setVal(ch, val);
 }
 
 //function to get set voltage at specified DAC address
-double AD56X4R::getV(byte address){
-  return _voltage[address];
+double AD56XXR::getVolt(uint8_t ch){
+  // _val holds authoritative DAC output
+  return val_to_volt(_val[ch]);
+}
+
+
+
+// leaving this public, for flexibility.
+
+void AD56XXR::writeDAC(uint8_t command, uint8_t address, uint16_t data){
+
+  uint8_t packet[3];
+  packet[0] = ((command & AD56XXR_COMMAND_MASK) << 3) | (address & AD56XXR_COMMAND_MASK);
+  packet[1] = (data >> 8) & 0xFF;  // high byte
+  packet[2] = data & 0xFF;  // low byte
+
+  if (_emulate_spi){
+
+    int send_bit;
+
+    //Make sure communication lines are initialized
+    digitalWrite(_SCK_PIN, HIGH);
+    digitalWrite(_MOSI_PIN, LOW);
+
+    digitalWrite(_CS_PIN,LOW);
+
+    for (int i = 0; i < 3; i++){
+      for (int b = 7; b >=0; b--){
+        send_bit = (packet[i] >> b) & 0x01; // mask out b_th bit
+        // bit-bang to DAC
+        digitalWrite(_MOSI_PIN, send_bit);
+        delayMicroseconds(1);
+
+        digitalWrite(_SCK_PIN, LOW);
+        delayMicroseconds(1);
+        digitalWrite(_SCK_PIN, HIGH);
+        delayMicroseconds(1);
+      }
+    }
+    digitalWrite(_CS_PIN,HIGH);
+
+  } else {
+    SPI.beginTransaction(SPISettings(AD56XXR_SPI_SPEED, MSBFIRST, SPI_MODE2));
+    digitalWrite(_CS_PIN, LOW);
+    for (int i = 0; i < 3; i++){
+      SPI.transfer(packet[i]);
+    }
+    digitalWrite(_CS_PIN, HIGH);
+    SPI.endTransaction();
+  }
+}
+
+/* Private class functions */
+
+double AD56XXR::val_to_volt(uint16_t val){
+  double ret =  ((double) val * _volt_ref / (1UL << _dac_precision) + _volt_offset);
+  return ret;
+
+}
+
+uint16_t AD56XXR::volt_to_val(double volt){
+  uint16_t ret = (uint16_t)(round((1UL << _dac_precision)*(volt - _volt_offset) / _volt_ref));
+  return ret;
 }
