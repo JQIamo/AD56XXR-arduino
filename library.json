@@ -1,7 +1,7 @@
 {
   "name": "AD56XXR",
-  "keywords": "AD5624R, AD5644R, AD5664R, AD5623R, AD5643R, AD5663R, DAC",
-  "description": "Library for interfacing with the AD56XXR dual/quad 12/14/16 bit DACs.",
+  "keywords": "dac",
+  "description": "Library for interfacing with the AD56XXR dual/quad 12/14/16 bit DACs (AD5624R, AD5644R, AD5664R, AD5623R, AD5643R, AD5663R).",
   "authors": [
     {
       "name": "Benjamin Reschovsky",
@@ -18,5 +18,6 @@
     "url": "https://github.com/JQIamo/AD56XXR-arduino.git"
   },
   "version": "0.9.0",
-  "frameworks": "arduino"
+  "frameworks": "arduino",
+  "platforms": "*"
 }
