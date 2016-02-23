@@ -91,7 +91,7 @@ AD56XXR::AD56XXR(uint8_t CS_PIN, uint8_t num_bits, double volt_ref, double volt_
     _dac_precision = 16;
   } else {
     //Serial.println("WARNING:DAC object initialized with wrong number of bits of precision. Allowed values are 12, 14, or 16");
-    _dac_precision = 12; //choose a reasonable default
+    _dac_precision = 16; //choose a reasonable default
   }
   _volt_ref = volt_ref;
   _volt_offset = volt_offset;
@@ -210,12 +210,11 @@ void AD56XXR::writeDAC(uint8_t command, uint8_t address, uint16_t data){
 /* Private class functions */
 
 double AD56XXR::val_to_volt(uint16_t val){
-  double ret =  ((double) val * _volt_ref / (1UL << _dac_precision) + _volt_offset);
+  double ret =  ((double) val * _volt_ref / ((1UL << _dac_precision) - 1) + _volt_offset);
   return ret;
-
 }
 
 uint16_t AD56XXR::volt_to_val(double volt){
-  uint16_t ret = (uint16_t)(round((1UL << _dac_precision)*(volt - _volt_offset) / _volt_ref));
+  uint16_t ret = (round(((1UL << _dac_precision) - 1)*(volt - _volt_offset) / _volt_ref));
   return ret;
 }
